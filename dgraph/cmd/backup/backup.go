@@ -16,16 +16,16 @@ import (
 	"github.com/dgraph-io/badger"
 	"github.com/dgraph-io/dgo"
 	"github.com/dgraph-io/dgo/protos/api"
-	"github.com/dgraph-io/dgraph/protos/pb"
+	"github.com/dgraph-io/dgraph/protos/intern"
 	"github.com/dgraph-io/dgraph/xidmap"
 	"google.golang.org/grpc"
 )
 
 type collector struct {
-	kv []*pb.KV
+	kv []*intern.KV
 }
 
-func (c *collector) Send(kvs *pb.KVS) error {
+func (c *collector) Send(kvs *intern.KVS) error {
 	c.kv = append(c.kv, kvs.Kv...)
 	return nil
 }

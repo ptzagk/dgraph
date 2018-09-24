@@ -246,16 +246,11 @@ func setup(opts batchMutationOptions, dc *dgo.Dgraph) *loader {
 		opts:     opts,
 		dc:       dc,
 		start:    time.Now(),
-		reqs:     make(chan api.Mutation, opts.Pending*2),
 		alloc:    alloc,
 		kv:       kv,
 		zeroconn: connzero,
 	}
-
-	l.requestsWg.Add(opts.Pending)
-	for i := 0; i < opts.Pending; i++ {
-		go l.makeRequests()
-	}
+	go l.makeRequests()
 
 	rand.Seed(time.Now().Unix())
 	return l
@@ -277,8 +272,6 @@ func run() {
 	go http.ListenAndServe("localhost:6060", nil)
 	ctx := context.Background()
 	bmOpts := batchMutationOptions{
-		Size:          opt.numRdf,
-		Pending:       opt.concurrent,
 		PrintCounters: true,
 		Ctx:           ctx,
 		MaxRetries:    math.MaxUint32,
