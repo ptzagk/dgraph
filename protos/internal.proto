@@ -399,6 +399,7 @@ service Zero {
 	rpc Timestamps (Num)               returns (AssignedIds) {}
 	rpc CommitOrAbort (api.TxnContext) returns (api.TxnContext) {}
 	rpc TryAbort (TxnTimestamps)       returns (OracleDelta) {}
+	rpc Backup (BackupRequest)         returns (BackupResponse) {}
 }
 
 service Worker {
@@ -409,10 +410,9 @@ service Worker {
 	rpc Sort (SortMessage)                    returns (SortResult) {}
 	rpc Schema (SchemaRequest)                returns (SchemaResult) {}
 	rpc PurgeTs (api.Payload)                 returns (Num) {}
-
-	rpc Export (ExportPayload)              returns (ExportPayload) {}
-	rpc ReceivePredicate(stream KVS)         returns (api.Payload) {}
-	rpc MovePredicate(MovePredicatePayload) returns (api.Payload) {}
+	rpc Export (ExportPayload)                returns (ExportPayload) {}
+	rpc ReceivePredicate(stream KVS)          returns (api.Payload) {}
+	rpc MovePredicate(MovePredicatePayload)   returns (api.Payload) {}
 }
 
 message Num {
@@ -432,5 +432,21 @@ message SnapshotMeta {
 	uint64 client_ts = 1;
 	uint32 group_id = 2;
 }
+
+message BackupRequest {
+	string destination = 1;
+	string incremental_base = 2;
+	uint64 start_ts = 3;
+}
+
+message BackupResponse {
+	enum Status {
+		SUCCESS = 0;
+		FAILED  = 1;
+	}
+	Status status = 1;
+	string message = 2;
+}
+
 
 // vim: noexpandtab sw=2 ts=2

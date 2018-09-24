@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dgraph-io/dgraph/dgraph/cmd/backup"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/bulk"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/debug"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/live"
@@ -67,7 +68,7 @@ func init() {
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 
 	var subcommands = []*x.SubCommand{
-		&bulk.Bulk, &live.Live, &server.Server, &zero.Zero, &version.Version, &debug.Debug,
+		&backup.Backup, &bulk.Bulk, &live.Live, &server.Server, &zero.Zero, &version.Version, &debug.Debug,
 	}
 	for _, sc := range subcommands {
 		RootCmd.AddCommand(sc.Cmd)
