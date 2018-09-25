@@ -399,7 +399,7 @@ service Zero {
 	rpc Timestamps (Num)               returns (AssignedIds) {}
 	rpc CommitOrAbort (api.TxnContext) returns (api.TxnContext) {}
 	rpc TryAbort (TxnTimestamps)       returns (OracleDelta) {}
-	rpc Backup (BackupRequest)         returns (BackupResponse) {}
+	rpc Backup (BackupRequest)         returns (stream Chunks) {}
 }
 
 service Worker {
@@ -439,13 +439,13 @@ message BackupRequest {
 	uint64 start_ts = 3;
 }
 
-message BackupResponse {
-	enum Status {
-		SUCCESS = 0;
-		FAILED  = 1;
-	}
-	Status status = 1;
-	string message = 2;
+message Chunks {
+	repeated Chunk c = 1;
+}
+
+message Chunk {
+	bytes val  = 1;
+	bytes csum = 2;
 }
 
 

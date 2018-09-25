@@ -16,37 +16,26 @@ import (
 	"github.com/dgraph-io/dgraph/x"
 )
 
-type collector struct {
-	kv []*intern.KV
-}
-
-func (c *collector) Send(kvs *intern.KVS) error {
-	c.kv = append(c.kv, kvs.Kv...)
-	return nil
-}
-
 type backup struct {
-	ticker *time.Ticker
-	wg     sync.WaitGroup
-
-	// Num of aborts
-	aborts uint64
-	// To get time elapsel.
-	start time.Time
-
-	zc intern.ZeroClient
+	ticker   *time.Ticker
+	wg       sync.WaitGroup
+	tempFile string    // staging file
+	location string    // URL to final destination
+	aborts   uint64    // Num of aborts
+	start    time.Time // To get time elapsel.
+	zc       intern.ZeroClient
 }
 
 func (b *backup) process() {
 	defer b.wg.Done()
 	x.Printf("Backup: Processing %+v\n", b)
 	req := &intern.BackupRequest{
-		Destination: "somewhere",
+		Destination: b.tempFile,
 	}
-	stream, err := b.zc.Backup(context.Background(), req)
+	res, err := b.zc.Backup(context.Background(), req)
 	if err != nil {
 		x.Println("process:", err)
 		return
 	}
-	x.Printf("%+v", stream)
+	x.Printf("%+v", res)
 }
