@@ -14,6 +14,7 @@ import (
 
 	"github.com/dgraph-io/dgraph/dgraph/cmd/backup"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/bulk"
+	"github.com/dgraph-io/dgraph/dgraph/cmd/cert"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/debug"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/live"
 	"github.com/dgraph-io/dgraph/dgraph/cmd/server"
@@ -67,9 +68,9 @@ func init() {
 	rootConf.BindPFlags(RootCmd.PersistentFlags())
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 
-	var subcommands = []*x.SubCommand{
-		&backup.Backup, &bulk.Bulk, &live.Live, &server.Server, &zero.Zero, &version.Version, &debug.Debug,
-	}
+	var subcommands = []*x.SubCommand{&backup.Backup, &bulk.Bulk, &cert.Cert, &live.Live,
+		&server.Server, &zero.Zero, &version.Version, &debug.Debug}
+
 	for _, sc := range subcommands {
 		RootCmd.AddCommand(sc.Cmd)
 		sc.Conf = viper.New()
