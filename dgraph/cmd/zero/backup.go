@@ -8,122 +8,115 @@
 package zero
 
 import (
+	"crypto/md5"
 	"io"
-	"sync/atomic"
-	"time"
+	"sync"
 
 	"github.com/dgraph-io/dgraph/protos/intern"
 	"github.com/dgraph-io/dgraph/x"
-	humanize "github.com/dustin/go-humanize"
-	"golang.org/x/net/context"
 )
 
 func (s *Server) Backup(req *intern.BackupRequest, stream intern.Zero_BackupServer) error {
-	x.Printf("SERVER BACKUP: %+v\n", req)
-	if !s.Node.AmLeader() {
-		return errNotLeader
-	}
+	ctx := s.Node.ctx
+	cerr := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	ckvs := make(chan *intern.KVS, 100)
+	go processKVS(&wg, stream, ckvs, cerr)
 
-	groups := s.KnownGroups()
-	for _, group := range groups {
+	for _, group := range s.KnownGroups() {
 		pl := s.Leader(group)
 		if pl == nil {
-			x.Printf("No healthy connection found to leader of group %d\n", group)
+			x.Printf("Backup: No healthy connection found to leader of group %d\n", group)
 			continue
 		}
-		worker := intern.NewWorkerClient(pl.Get())
+
 		x.Printf("Backup: Requesting snapshot: group %d\n", group)
-		stream, err := worker.StreamSnapshot(context.Background(), &intern.Snapshot{})
+		worker := intern.NewWorkerClient(pl.Get())
+		kvs, err := worker.StreamSnapshot(ctx, &intern.Snapshot{})
 		if err != nil {
-			x.Println("Snapshot failed:", err)
 			return err
 		}
 
-		ctx := context.Background()
-
-		kvChan := make(chan *intern.KVS, 100)
-		che := make(chan error, 1)
-		go writeValue(ctx, kvChan, che)
-
-		// We can use count to check the number of posting lists returned in tests.
 		count := 0
-		for {
-			kvs, err := stream.Recv()
-			if err == io.EOF {
-				x.Printf("EOF has been reached\n")
-				break
-			}
-			if err != nil {
-				close(kvChan)
-				return err
-			}
-			// We check for errors, if there are no errors we send value to channel.
+		for kvs := range fetchKVS(kvs, cerr) {
 			select {
-			case kvChan <- kvs:
+			case ckvs <- kvs:
 				count += len(kvs.Kv)
-				// OK
 			case <-ctx.Done():
-				close(kvChan)
+				close(ckvs)
 				return ctx.Err()
-			case err := <-che:
-				close(kvChan)
-				// Important: Don't put return count, err
-				// There was a compiler bug which was fixed in 1.8.1
-				// https://github.com/golang/go/issues/21722.
-				// Probably should be ok to return count, err now
+			case err := <-cerr:
+				x.Println("Failure:", err)
+				close(ckvs)
 				return err
 			}
 		}
-		close(kvChan)
+		x.Printf("Backup: Group %d sent %d keys.\n", group, count)
+	}
+	close(ckvs)
 
-		if err := <-che; err != nil {
-			return err
-		}
-		x.Printf("Group %d: Got %d keys. DONE.\n", group, count)
+	wg.Wait()
+
+	if err := <-cerr; err != nil {
+		x.Println("Error:", err)
+		return err
 	}
 
 	return nil
 }
 
-func writeValue(ctx context.Context, kvChan chan *intern.KVS, che chan error) {
-	var bytesWritten uint64
-	t := time.NewTicker(time.Second)
-	defer t.Stop()
+// fetchKVS gets streamed snapshot from worker.
+func fetchKVS(stream intern.Worker_StreamSnapshotClient, cerr chan error) chan *intern.KVS {
+	out := make(chan *intern.KVS)
 	go func() {
-		now := time.Now()
-		for range t.C {
-			dur := time.Since(now)
-			durSec := uint64(dur.Seconds())
-			if durSec == 0 {
-				continue
+		for {
+			kvs, err := stream.Recv()
+			if err == io.EOF {
+				break
 			}
-			speed := bytesWritten / durSec
-			x.Printf("Getting SNAPSHOT: Time elapsed: %v, bytes written: %s, %s/s\n",
-				x.FixedDuration(dur), humanize.Bytes(bytesWritten), humanize.Bytes(speed))
+			if err != nil {
+				cerr <- err
+				break
+			}
+			out <- kvs
 		}
+		close(out)
 	}()
+	return out
+}
 
-	var hasError int32
-OUTER:
-	for kvs := range kvChan {
+// processKVS unrolls the KVS list values and streams them back to the client.
+// Postprocessing should happen at the client side.
+func processKVS(
+	wg *sync.WaitGroup,
+	stream intern.Zero_BackupServer,
+	in chan *intern.KVS,
+	cerr chan error,
+) {
+	defer wg.Done()
+	var csum [16]byte
+	for kvs := range in {
 		for _, kv := range kvs.Kv {
 			if kv.Version == 0 {
-				// Ignore this one. Otherwise, we'll get ErrManagedDB back, because every Commit in
-				// managed DB must have a valid commit ts.
 				continue
 			}
-			// Encountered an issue, no need to process the kv.
-			if atomic.LoadInt32(&hasError) > 0 {
-				break OUTER
+			b, err := kv.Marshal()
+			if err != nil {
+				cerr <- err
+				return
 			}
-
-			// x.Printf("key=%s value=%s meta=%s\n", kv.Key, kv.Val, kv.UserMeta)
+			csum = md5.Sum(b)
+			resp := &intern.BackupResponse{
+				Data:     b,
+				Length:   uint64(len(b)),
+				Checksum: csum[:],
+			}
+			if err := stream.Send(resp); err != nil {
+				cerr <- err
+				return
+			}
 		}
 	}
-
-	if atomic.LoadInt32(&hasError) == 0 {
-		che <- nil
-	} else {
-		che <- x.Errorf("Error while writing to badger")
-	}
+	cerr <- nil
 }

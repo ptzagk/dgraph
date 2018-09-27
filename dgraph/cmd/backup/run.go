@@ -8,24 +8,24 @@
 package backup
 
 import (
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
-	"strings"
+	"os"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/dgraph-io/dgraph/protos/intern"
 	"github.com/dgraph-io/dgraph/x"
 	"github.com/spf13/cobra"
 )
 
 type options struct {
-	// dgraph              string
-	zero string
-	// concurrent          int
-	clientDir string
+	zero   string
+	tmpDir string
+	dstURL string
+	full   bool
 }
 
 var opt options
@@ -39,21 +39,70 @@ func init() {
 		Short: "Run Dgraph backup",
 		Run: func(cmd *cobra.Command, args []string) {
 			defer x.StartProfile(Backup.Conf).Stop()
-			run()
+			if err := run(); err != nil {
+				x.Printf("Backup: %s\n", err)
+				os.Exit(1)
+			}
 		},
 	}
 	Backup.EnvPrefix = "DGRAPH_BACKUP"
 
 	flag := Backup.Cmd.Flags()
 	flag.StringP("zero", "z", "127.0.0.1:5080", "Dgraphzero gRPC server address")
-	flag.IntP("conc", "c", 100,
-		"Number of concurrent requests to make to Dgraph")
-
+	flag.StringP("tmpdir", "t", "", "Directory to store temporary files")
+	flag.StringP("dst", "d", "", "URL path destination to store the backup file(s)")
+	flag.Bool("full", true, "Full backup, otherwise incremental using dst value")
 	// TLS configuration
-	x.RegisterTLSFlags(flag)
-	flag.Bool("tls_insecure", false, "Skip certificate validation (insecure)")
-	flag.String("tls_ca_certs", "", "CA Certs file path.")
-	flag.String("tls_server_name", "", "Server name.")
+	// x.RegisterTLSFlags(flag)
+	Backup.Cmd.MarkFlagRequired("dst")
+}
+
+func run() error {
+	opt = options{
+		zero:   Backup.Conf.GetString("zero"),
+		tmpDir: Backup.Conf.GetString("tmpdir"),
+		dstURL: Backup.Conf.GetString("dst"),
+		full:   Backup.Conf.GetBool("full"),
+	}
+	// x.LoadTLSConfig(&tlsConf, Backup.Conf)
+
+	go http.ListenAndServe("localhost:6060", nil)
+
+	b, err := setup()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Backup: saving to: %s ...\n", b.dst)
+	if err := b.process(); err != nil {
+		return err
+	}
+	fmt.Printf("Backup: time lapsed: %s\n", time.Since(b.start))
+
+	return nil
+}
+
+func setup() (*backup, error) {
+	// find handler
+	h, err := findHandler(opt.dstURL)
+	if err != nil {
+		return nil, x.Errorf("Backup: failed to parse destination URL: %s", err)
+	}
+
+	// connect to zero
+	connzero, err := setupConnection(opt.zero, true)
+	if err != nil {
+		return nil, x.Errorf("Backup: unable to connect to zero at %q: %s", opt.zero, err)
+	}
+
+	start := time.Now()
+	b := &backup{
+		start:    start,
+		zeroconn: connzero,
+		h:        h,
+		dst:      dgraphBackupFullPrefix + start.Format(time.RFC3339) + dgraphBackupSuffix,
+	}
+
+	return b, nil
 }
 
 func setupConnection(host string, insecure bool) (*grpc.ClientConn, error) {
@@ -81,42 +130,4 @@ func setupConnection(host string, insecure bool) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 		grpc.WithTimeout(10*time.Second))
-}
-
-func fileList(files string) []string {
-	if len(files) == 0 {
-		return []string{}
-	}
-	return strings.Split(files, ",")
-}
-
-func setup() *backup {
-	zero, err := setupConnection(opt.zero, true)
-	x.Checkf(err, "Unable to connect to zero, Is it running at %s?", opt.zero)
-
-	b := &backup{
-		start: time.Now(),
-		zc:    intern.NewZeroClient(zero),
-	}
-
-	return b
-}
-
-func run() {
-	opt = options{
-		zero: Backup.Conf.GetString("zero"),
-		// concurrent:          Backup.Conf.GetInt("conc"),
-	}
-	x.LoadTLSConfig(&tlsConf, Backup.Conf)
-	tlsConf.Insecure = Backup.Conf.GetBool("tls_insecure")
-	tlsConf.RootCACerts = Backup.Conf.GetString("tls_ca_certs")
-	tlsConf.ServerName = Backup.Conf.GetString("tls_server_name")
-
-	go http.ListenAndServe("localhost:6060", nil)
-
-	b := setup()
-
-	b.wg.Add(1)
-	go b.process()
-	b.wg.Wait()
 }
