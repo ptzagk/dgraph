@@ -76,7 +76,7 @@ func run() error {
 	if err := b.process(); err != nil {
 		return err
 	}
-	fmt.Printf("Backup: time lapsed: %s\n", time.Since(b.start))
+	fmt.Printf("Backup: time elapsed: %s\n", time.Since(b.start))
 
 	return nil
 }
