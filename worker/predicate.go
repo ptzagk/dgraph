@@ -182,9 +182,7 @@ func (w *grpcWorker) StreamSnapshot(reqSnap *intern.Snapshot,
 		return err
 	}
 	x.Printf("Got StreamSnapshot request. Mine: %+v. Requested: %+v\n", snap, reqSnap)
-	switch {
-	case reqSnap.Index == 0:
-	case snap.Index != reqSnap.Index || snap.ReadTs != reqSnap.ReadTs:
+	if snap.Index > reqSnap.Index || snap.ReadTs > reqSnap.ReadTs {
 		return errors.New("Mismatching snapshot request")
 	}
 

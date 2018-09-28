@@ -21,14 +21,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type options struct {
+var opt struct {
 	zero   string
 	tmpDir string
-	dstURL string
-	full   bool
+	target string
+	source string
 }
 
-var opt options
 var tlsConf x.TLSHelperConfig
 
 var Backup x.SubCommand
@@ -48,23 +47,17 @@ func init() {
 	Backup.EnvPrefix = "DGRAPH_BACKUP"
 
 	flag := Backup.Cmd.Flags()
-	flag.StringP("zero", "z", "127.0.0.1:5080", "Dgraphzero gRPC server address")
-	flag.StringP("tmpdir", "t", "", "Directory to store temporary files")
-	flag.StringP("dst", "d", "", "URL path destination to store the backup file(s)")
-	flag.Bool("full", true, "Full backup, otherwise incremental using dst value")
-	// TLS configuration
-	// x.RegisterTLSFlags(flag)
-	Backup.Cmd.MarkFlagRequired("dst")
+	flag.StringVarP(&opt.zero, "zero", "z", "127.0.0.1:5080", "Dgraphzero gRPC server address")
+	flag.StringVar(&opt.tmpDir, "tmpdir", "", "Directory to store temporary files")
+	flag.StringVarP(&opt.target, "target", "t", "", "URI path target to store the backups")
+	flag.StringVarP(&opt.source, "source", "s", "", "URI path source containing full backups")
+	x.RegisterTLSFlags(flag)
+	Backup.Cmd.MarkFlagRequired("target")
 }
 
 func run() error {
-	opt = options{
-		zero:   Backup.Conf.GetString("zero"),
-		tmpDir: Backup.Conf.GetString("tmpdir"),
-		dstURL: Backup.Conf.GetString("dst"),
-		full:   Backup.Conf.GetBool("full"),
-	}
-	// x.LoadTLSConfig(&tlsConf, Backup.Conf)
+	x.LoadTLSConfig(&tlsConf, Backup.Conf)
+	x.Printf("%#v\n", opt)
 
 	go http.ListenAndServe("localhost:6060", nil)
 
@@ -82,13 +75,11 @@ func run() error {
 }
 
 func setup() (*backup, error) {
-	// find handler
-	h, err := findHandler(opt.dstURL)
+	h, err := findHandler(opt.target)
 	if err != nil {
-		return nil, x.Errorf("Backup: failed to parse destination URL: %s", err)
+		return nil, x.Errorf("Backup: failed to find target handler: %s", err)
 	}
 
-	// connect to zero
 	connzero, err := setupConnection(opt.zero, true)
 	if err != nil {
 		return nil, x.Errorf("Backup: unable to connect to zero at %q: %s", opt.zero, err)
@@ -98,9 +89,18 @@ func setup() (*backup, error) {
 	b := &backup{
 		start:    start,
 		zeroconn: connzero,
-		h:        h,
+		target:   h,
 		dst:      dgraphBackupFullPrefix + start.Format(time.RFC3339) + dgraphBackupSuffix,
 	}
+
+	if opt.source != "" {
+		b.source, err = findHandler(opt.source)
+		if err != nil {
+			return nil, x.Errorf("Backup: failed to find a source handler: %s", err)
+		}
+	}
+
+	b.incremental = b.source != nil
 
 	return b, nil
 }

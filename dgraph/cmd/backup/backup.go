@@ -10,7 +10,7 @@ package backup
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"time"
@@ -22,10 +22,11 @@ import (
 )
 
 type backup struct {
-	h        handler
-	dst      string
-	start    time.Time // To get time elapsel.
-	zeroconn *grpc.ClientConn
+	target, source handler
+	incremental    bool
+	dst            string
+	start          time.Time // To get time elapsel.
+	zeroconn       *grpc.ClientConn
 }
 
 func (b *backup) process() error {
@@ -41,6 +42,7 @@ func (b *backup) process() error {
 		return err
 	}
 
+	h := crc32.NewIEEE()
 	for {
 		res, err := stream.Recv()
 		if err == io.EOF {
@@ -50,9 +52,9 @@ func (b *backup) process() error {
 			return err
 		}
 
-		csum0 := md5.Sum(res.Data)
-		if !bytes.Equal(csum0[:], res.Checksum) {
-			x.Printf("Warning: data checksum failed: csum0 != %x\n", res.Checksum)
+		csum := h.Sum(res.Data)
+		if !bytes.Equal(csum, res.Checksum) {
+			x.Printf("Warning: data checksum failed: %x != %x\n", csum, res.Checksum)
 			continue
 		}
 
@@ -61,7 +63,7 @@ func (b *backup) process() error {
 		}
 	}
 
-	if err := b.h.Copy(tempFile.Name(), b.dst); err != nil {
+	if err := b.target.Copy(tempFile.Name(), b.dst); err != nil {
 		return x.Errorf("Backup: could not copy to destination: %s\n", err)
 	}
 

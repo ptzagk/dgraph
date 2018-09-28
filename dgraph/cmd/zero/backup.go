@@ -8,7 +8,7 @@
 package zero
 
 import (
-	"crypto/md5"
+	"hash/crc32"
 	"io"
 	"sync"
 
@@ -17,11 +17,9 @@ import (
 )
 
 func (s *Server) Backup(req *intern.BackupRequest, stream intern.Zero_BackupServer) error {
-	ctx := s.Node.ctx
-	cerr := make(chan error, 1)
 	var wg sync.WaitGroup
+	ckvs, cerr := make(chan *intern.KVS, 100), make(chan error, 1)
 	wg.Add(1)
-	ckvs := make(chan *intern.KVS, 100)
 	go processKVS(&wg, stream, ckvs, cerr)
 
 	for _, group := range s.KnownGroups() {
@@ -32,7 +30,7 @@ func (s *Server) Backup(req *intern.BackupRequest, stream intern.Zero_BackupServ
 		}
 
 		x.Printf("Backup: Requesting snapshot: group %d\n", group)
-		worker := intern.NewWorkerClient(pl.Get())
+		ctx, worker := s.Node.ctx, intern.NewWorkerClient(pl.Get())
 		kvs, err := worker.StreamSnapshot(ctx, &intern.Snapshot{})
 		if err != nil {
 			return err
@@ -54,10 +52,11 @@ func (s *Server) Backup(req *intern.BackupRequest, stream intern.Zero_BackupServ
 		}
 		x.Printf("Backup: Group %d sent %d keys.\n", group, count)
 	}
-	close(ckvs)
 
+	close(ckvs)
 	wg.Wait()
 
+	// check for any errors from processKVS
 	if err := <-cerr; err != nil {
 		x.Println("Error:", err)
 		return err
@@ -88,14 +87,11 @@ func fetchKVS(stream intern.Worker_StreamSnapshotClient, cerr chan error) chan *
 
 // processKVS unrolls the KVS list values and streams them back to the client.
 // Postprocessing should happen at the client side.
-func processKVS(
-	wg *sync.WaitGroup,
-	stream intern.Zero_BackupServer,
-	in chan *intern.KVS,
-	cerr chan error,
-) {
+func processKVS(wg *sync.WaitGroup, stream intern.Zero_BackupServer, in chan *intern.KVS,
+	cerr chan error) {
 	defer wg.Done()
-	var csum [16]byte
+
+	h := crc32.NewIEEE()
 	for kvs := range in {
 		for _, kv := range kvs.Kv {
 			if kv.Version == 0 {
@@ -106,11 +102,11 @@ func processKVS(
 				cerr <- err
 				return
 			}
-			csum = md5.Sum(b)
+
 			resp := &intern.BackupResponse{
 				Data:     b,
 				Length:   uint64(len(b)),
-				Checksum: csum[:],
+				Checksum: h.Sum(b),
 			}
 			if err := stream.Send(resp); err != nil {
 				cerr <- err
