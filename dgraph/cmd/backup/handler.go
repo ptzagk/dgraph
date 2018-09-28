@@ -18,6 +18,7 @@ import (
 // Session() will read any supported environment variables and authenticate if needed.
 // List() returns a sorted slice of files at a location; such as remote or local.
 // Copy() copies a local file (from tmpDir) to a new destination, possibly remote.
+// Exists() tests if a file exists.
 type handler interface {
 	Session(string, string) error
 	List() ([]string, error)
